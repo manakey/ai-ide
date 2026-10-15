@@ -22,6 +22,8 @@ export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile
   const inputRef = useRef(null);
   const streamBuf = useRef('');
   const listenerId = useId();
+  // Keep a stable ref to messages so the WS listener always sees current state
+  const messagesRef = useRef(messages);
 
   // Load models
   useEffect(() => {
@@ -36,41 +38,50 @@ export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile
       .catch(() => {});
   }, []);
 
-  // WebSocket message handler
+  // Keep messagesRef in sync
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
+  // WebSocket message handler — registered once, never re-registered
   useEffect(() => {
     const unsub = ws.addListener(listenerId, (data) => {
       if (data.type === 'chunk') {
         streamBuf.current += data.content;
+        const buf = streamBuf.current;
         setMessages(prev => {
           const next = [...prev];
           const last = next[next.length - 1];
           if (last?.role === 'assistant' && last._streaming) {
-            next[next.length - 1] = { ...last, content: streamBuf.current };
+            next[next.length - 1] = { ...last, content: buf };
+            return next;
           }
-          return next;
+          return prev;
         });
       } else if (data.type === 'done') {
+        const finalContent = streamBuf.current;
+        streamBuf.current = '';
         setMessages(prev => {
           const next = [...prev];
           const last = next[next.length - 1];
           if (last?._streaming) {
-            next[next.length - 1] = { role: 'assistant', content: streamBuf.current };
+            next[next.length - 1] = { role: 'assistant', content: finalContent || last.content };
+            return next;
           }
-          return next;
+          return prev;
         });
-        streamBuf.current = '';
         setStreaming(false);
       } else if (data.type === 'error') {
+        const msg = data.message;
+        streamBuf.current = '';
         setMessages(prev => [
           ...prev.filter(m => !m._streaming),
-          { role: 'assistant', content: `⚠️ Error: ${data.message}` }
+          { role: 'assistant', content: `⚠️ Error: ${msg}` }
         ]);
-        streamBuf.current = '';
         setStreaming(false);
       }
     });
     return unsub;
-  }, [ws, listenerId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ws]);
 
   // Auto scroll
   useEffect(() => {
