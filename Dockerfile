@@ -1,30 +1,32 @@
-# Build frontend
+# ── Stage 1: Build frontend ──────────────────────────────
 FROM node:20-alpine AS frontend-builder
-WORKDIR /app/frontend
+WORKDIR /frontend
+
 COPY frontend/package.json ./
 RUN npm install
+
 COPY frontend/ ./
 RUN npm run build
+# Output: /frontend/dist/
 
-# Backend + serve frontend
-FROM node:20-alpine AS runtime
+# ── Stage 2: Backend + serve frontend ────────────────────
+FROM node:20-alpine
 WORKDIR /app
 
-# Install system tools for code execution
-RUN apk add --no-cache python3 py3-pip bash git
+# Runtime tools for code execution
+RUN apk add --no-cache python3 bash git
 
-# Backend deps
+# Install backend deps
 COPY backend/package.json ./
-RUN npm install
+RUN npm install --omit=dev
 
 # Copy backend source
 COPY backend/src ./src
 
-# Copy built frontend
-COPY --from=frontend-builder /app/frontend/dist ./public
-
-# Serve static frontend from backend
-RUN npm install serve --save
+# Copy built frontend into /app/public
+# index.js looks for: join(__dirname, '..', '..', 'public')
+# __dirname = /app/src  →  ../../public = /app/public  ✓
+COPY --from=frontend-builder /frontend/dist ./public
 
 ENV NODE_ENV=production
 ENV PORT=3001
