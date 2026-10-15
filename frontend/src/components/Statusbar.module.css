@@ -1,0 +1,37 @@
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 22px;
+  padding: 0 12px;
+  background: var(--accent);
+  flex-shrink: 0;
+  font-size: 11px;
+  color: rgba(255,255,255,0.9);
+}
+
+.left, .right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.item {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dot.connected { background: var(--ok); }
+.dot.disconnected { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
