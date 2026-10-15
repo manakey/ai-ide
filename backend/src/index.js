@@ -31,9 +31,10 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', aiProvider: process.env.AI_PROVIDER || 'ollama' });
 });
 
-// Serve built frontend (produced by Docker build)
-// In Docker: frontend/dist is copied to /app/public
-const PUBLIC_DIR = join(__dirname, '..', '..', 'public');
+// Serve built frontend
+// In Docker: PUBLIC_DIR env var is set to /app/public
+// Locally: falls back to relative path
+const PUBLIC_DIR = process.env.PUBLIC_DIR || join(__dirname, '..', '..', 'public');
 console.log(`Looking for frontend at: ${PUBLIC_DIR}`);
 
 if (existsSync(PUBLIC_DIR)) {

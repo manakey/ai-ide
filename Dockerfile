@@ -30,6 +30,7 @@ COPY --from=frontend-builder /frontend/dist ./public
 
 ENV NODE_ENV=production
 ENV PORT=3001
+ENV PUBLIC_DIR=/app/public
 
 EXPOSE 3001
 
