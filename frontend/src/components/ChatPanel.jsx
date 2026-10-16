@@ -18,12 +18,30 @@ export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile
   const [streaming, setStreaming] = useState(false);
   const [models, setModels] = useState([]);
   const [includeContext, setIncludeContext] = useState(true);
+  const [modelSearch, setModelSearch] = useState('');
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const modelDropdownRef = useRef(null);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const streamBuf = useRef('');
   const listenerId = useId();
   // Keep a stable ref to messages so the WS listener always sees current state
   const messagesRef = useRef(messages);
+
+  // Close model dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target)) {
+        setModelDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filteredModels = models.filter(m =>
+    (m.name || m.id).toLowerCase().includes(modelSearch.toLowerCase())
+  );
 
   // Load models
   useEffect(() => {
@@ -175,14 +193,47 @@ export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile
       <div className={styles.header}>
         <span className={styles.title}>AI Assistant</span>
         <div className={styles.controls}>
-          <select
-            className={styles.modelSelect}
-            value={selectedModel}
-            onChange={e => onModelChange(e.target.value)}
-          >
-            {models.length === 0 && <option value="">Loading...</option>}
-            {models.map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
-          </select>
+          <div className={styles.modelPicker} ref={modelDropdownRef}>
+            <button
+              className={styles.modelBtn}
+              onClick={() => { setModelDropdownOpen(v => !v); setModelSearch(''); }}
+              title="Select model"
+            >
+              <span className={styles.modelBtnLabel}>
+                {selectedModel
+                  ? (selectedModel.length > 22 ? '…' + selectedModel.slice(-20) : selectedModel)
+                  : 'Select model'}
+              </span>
+              <span className={styles.modelBtnArrow}>{modelDropdownOpen ? '▲' : '▼'}</span>
+            </button>
+            {modelDropdownOpen && (
+              <div className={styles.modelDropdown}>
+                <div className={styles.modelSearchWrap}>
+                  <input
+                    className={styles.modelSearchInput}
+                    autoFocus
+                    placeholder="Search models..."
+                    value={modelSearch}
+                    onChange={e => setModelSearch(e.target.value)}
+                  />
+                </div>
+                <div className={styles.modelList}>
+                  {filteredModels.length === 0 && (
+                    <div className={styles.modelEmpty}>No matches</div>
+                  )}
+                  {filteredModels.map(m => (
+                    <button
+                      key={m.id}
+                      className={`${styles.modelOption} ${selectedModel === m.id ? styles.modelOptionActive : ''}`}
+                      onClick={() => { onModelChange(m.id); setModelDropdownOpen(false); }}
+                    >
+                      {m.name || m.id}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           <button className={styles.clearBtn} onClick={clearChat} title="Clear chat">↺</button>
         </div>
       </div>
