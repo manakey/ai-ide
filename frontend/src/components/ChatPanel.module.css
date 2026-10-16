@@ -331,3 +331,104 @@
 }
 .sendBtn:hover { opacity: 0.88; }
 .sendBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Action proposal cards */
+.actionCard {
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 8px 0;
+  background: var(--bg-sidebar);
+}
+
+.actionDone {
+  border-color: rgba(61,214,140,0.3);
+  background: rgba(61,214,140,0.05);
+}
+
+.actionRejected {
+  border-color: rgba(247,89,89,0.2);
+  opacity: 0.6;
+}
+
+.actionHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-input);
+}
+
+.actionIcon { font-size: 14px; }
+
+.actionLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.actionPath {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-glow);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.actionCmd,
+.actionPreview {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: #c9d1d9;
+  background: #0d1117;
+  padding: 8px 10px;
+  margin: 0;
+  overflow-x: auto;
+  max-height: 120px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.actionBtns {
+  display: flex;
+  gap: 6px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.approveBtn {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(61,214,140,0.15);
+  border: 1px solid rgba(61,214,140,0.4);
+  color: #3dd68c;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.approveBtn:hover { background: rgba(61,214,140,0.3); }
+
+.rejectBtn {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(247,89,89,0.1);
+  border: 1px solid rgba(247,89,89,0.3);
+  color: #f75959;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.rejectBtn:hover { background: rgba(247,89,89,0.2); }
+
+.actionStatus {
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}

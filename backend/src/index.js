@@ -3,13 +3,14 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import dotenv from 'dotenv';
-import { existsSync } from 'fs';
+import { existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { chatRouter } from './routes/chat.js';
 import { codeRouter } from './routes/code.js';
 import { githubRouter } from './routes/github.js';
 import { filesRouter } from './routes/files.js';
+import { handleTerminalWS, runCommand, WORK_DIR } from './routes/terminal.js';
 
 dotenv.config();
 
@@ -28,7 +29,36 @@ app.use('/api/github', githubRouter);
 app.use('/api/files', filesRouter);
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', aiProvider: process.env.AI_PROVIDER || 'ollama' });
+  res.json({ status: 'ok', aiProvider: process.env.AI_PROVIDER || 'ollama', workDir: WORK_DIR });
+});
+
+// AI action execution endpoint
+// AI can propose: create_file, run_command — user approves in frontend
+app.post('/api/actions/execute', async (req, res) => {
+  const { actions } = req.body; // [{ type, payload }]
+  if (!Array.isArray(actions)) return res.status(400).json({ error: 'actions array required' });
+
+  const results = [];
+  for (const action of actions) {
+    try {
+      if (action.type === 'create_file') {
+        const { path: filePath, content } = action.payload;
+        const abs = join(WORK_DIR, filePath);
+        mkdirSync(dirname(abs), { recursive: true });
+        writeFileSync(abs, content, 'utf8');
+        results.push({ type: 'create_file', path: filePath, ok: true });
+      } else if (action.type === 'run_command') {
+        const { command } = action.payload;
+        const result = await runCommand(command, WORK_DIR);
+        results.push({ type: 'run_command', command, ...result, ok: result.exitCode === 0 });
+      } else {
+        results.push({ type: action.type, ok: false, error: 'Unknown action' });
+      }
+    } catch (err) {
+      results.push({ type: action.type, ok: false, error: err.message });
+    }
+  }
+  res.json({ results });
 });
 
 // Serve built frontend
@@ -51,10 +81,20 @@ if (existsSync(PUBLIC_DIR)) {
   });
 }
 
-// WebSocket for streaming AI responses
-wss.on('connection', (ws) => {
-  console.log('WebSocket client connected');
+// WebSocket — handles both AI chat and terminal sessions
+wss.on('connection', (ws, req) => {
+  const url = new URL(req.url, 'http://localhost');
+  const mode = url.searchParams.get('mode') || 'chat';
+  const sessionId = url.searchParams.get('session') || 'default';
 
+  console.log(`WebSocket connected: mode=${mode} session=${sessionId}`);
+
+  if (mode === 'terminal') {
+    handleTerminalWS(ws, sessionId);
+    return;
+  }
+
+  // Chat mode
   ws.on('message', async (data) => {
     try {
       const { type, payload } = JSON.parse(data.toString());
@@ -68,7 +108,7 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => console.log('WebSocket client disconnected'));
+  ws.on('close', () => console.log('WebSocket chat disconnected'));
 });
 
 async function streamChat(ws, { messages, model, context }) {

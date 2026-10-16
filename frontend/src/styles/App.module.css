@@ -58,6 +58,7 @@
 .runBtn:hover { opacity: 0.88; }
 .runBtn:active { transform: scale(0.97); }
 .runBtn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+.runBtnActive { background: var(--bg-active); color: var(--accent); border: 1px solid var(--accent-dim); }
 
 .githubBtn {
   padding: 5px 12px;
@@ -78,11 +79,21 @@
   min-height: 0;
 }
 
+/* Right column: editor+chat on top, terminal at bottom */
+.rightColumn {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+}
+
 .mainArea {
   display: flex;
   flex: 1;
   overflow: hidden;
   min-width: 0;
+  min-height: 0;
 }
 
 .editorArea {

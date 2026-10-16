@@ -5,14 +5,86 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import styles from './ChatPanel.module.css';
 
-const SYSTEM_PROMPT = `You are an expert programming assistant embedded in an AI IDE.
-Help users write, debug, and improve code.
-When providing code, always specify the language in markdown fences.
-Be concise but thorough. If asked to create a complete file, provide the full content.`;
+const SYSTEM_PROMPT = `You are an expert programming assistant embedded in an AI IDE (similar to GitHub Codespaces).
+You can help users write, debug, and improve code.
 
-export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile, activeFileContent, onInsertCode }) {
+When you want to CREATE a file, use this exact format:
+<create_file path="filename.ext">
+file content here
+</create_file>
+
+When you want to RUN a terminal command, use this exact format:
+<run_command>
+command here
+</run_command>
+
+These will be shown to the user as approval cards. The user must approve before they execute.
+When providing code snippets inline, use standard markdown fences with the language.
+Be concise but thorough.`;
+
+// Parse AI response for action proposals
+function parseActions(content) {
+  const actions = [];
+  const createFileRe = /<create_file\s+path="([^"]+)">([\s\S]*?)<\/create_file>/g;
+  const runCommandRe = /<run_command>([\s\S]*?)<\/run_command>/g;
+
+  let m;
+  while ((m = createFileRe.exec(content)) !== null) {
+    actions.push({ type: 'create_file', path: m[1].trim(), content: m[2].trim(), id: `cf_${Math.random().toString(36).slice(2)}` });
+  }
+  while ((m = runCommandRe.exec(content)) !== null) {
+    actions.push({ type: 'run_command', command: m[1].trim(), id: `rc_${Math.random().toString(36).slice(2)}` });
+  }
+  return actions;
+}
+
+// Strip action tags from display content
+function stripActions(content) {
+  return content
+    .replace(/<create_file\s+path="[^"]+">[\s\S]*?<\/create_file>/g, '')
+    .replace(/<run_command>[\s\S]*?<\/run_command>/g, '')
+    .trim();
+}
+
+function ActionCard({ action, onApprove, onReject, status }) {
+  return (
+    <div className={`${styles.actionCard} ${status === 'done' ? styles.actionDone : status === 'rejected' ? styles.actionRejected : ''}`}>
+      <div className={styles.actionHeader}>
+        {action.type === 'create_file' ? (
+          <>
+            <span className={styles.actionIcon}>📄</span>
+            <span className={styles.actionLabel}>Create file</span>
+            <code className={styles.actionPath}>{action.path}</code>
+          </>
+        ) : (
+          <>
+            <span className={styles.actionIcon}>⚡</span>
+            <span className={styles.actionLabel}>Run command</span>
+          </>
+        )}
+      </div>
+      {action.type === 'run_command' && (
+        <pre className={styles.actionCmd}>{action.command}</pre>
+      )}
+      {action.type === 'create_file' && (
+        <pre className={styles.actionPreview}>{action.content.slice(0, 300)}{action.content.length > 300 ? '\n...' : ''}</pre>
+      )}
+      {status === 'pending' && (
+        <div className={styles.actionBtns}>
+          <button className={styles.approveBtn} onClick={() => onApprove(action)}>✓ Approve</button>
+          <button className={styles.rejectBtn} onClick={() => onReject(action)}>✕ Reject</button>
+        </div>
+      )}
+      {status === 'done' && <div className={styles.actionStatus}>✓ Executed</div>}
+      {status === 'rejected' && <div className={styles.actionStatus}>✕ Rejected</div>}
+      {status === 'running' && <div className={styles.actionStatus}>⏳ Running...</div>}
+    </div>
+  );
+}
+
+export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile, activeFileContent, onInsertCode, onFileCreated }) {
   const [messages, setMessages] = useState([
-    { role: 'assistant', content: 'こんにちは！コードを書くお手伝いをします。何か作りたいものや質問はありますか？' }
+    { role: 'assistant', content: 'こんにちは！コードを書くお手伝いをします。ファイルを作ったりコマンドを実行することもできます。何か作りたいものや質問はありますか？' }
   ]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -20,13 +92,12 @@ export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile
   const [includeContext, setIncludeContext] = useState(true);
   const [modelSearch, setModelSearch] = useState('');
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [actionStatus, setActionStatus] = useState({}); // id -> 'pending'|'running'|'done'|'rejected'
   const modelDropdownRef = useRef(null);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const streamBuf = useRef('');
   const listenerId = useId();
-  // Keep a stable ref to messages so the WS listener always sees current state
-  const messagesRef = useRef(messages);
 
   // Close model dropdown on outside click
   useEffect(() => {
@@ -56,10 +127,7 @@ export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile
       .catch(() => {});
   }, []);
 
-  // Keep messagesRef in sync
-  useEffect(() => { messagesRef.current = messages; }, [messages]);
-
-  // WebSocket message handler — registered once, never re-registered
+  // WebSocket message handler
   useEffect(() => {
     const unsub = ws.addListener(listenerId, (data) => {
       if (data.type === 'chunk') {
@@ -77,11 +145,20 @@ export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile
       } else if (data.type === 'done') {
         const finalContent = streamBuf.current;
         streamBuf.current = '';
+        const actions = parseActions(finalContent);
+        // Initialize action statuses
+        if (actions.length > 0) {
+          setActionStatus(prev => {
+            const next = { ...prev };
+            actions.forEach(a => { next[a.id] = 'pending'; });
+            return next;
+          });
+        }
         setMessages(prev => {
           const next = [...prev];
           const last = next[next.length - 1];
           if (last?._streaming) {
-            next[next.length - 1] = { role: 'assistant', content: finalContent || last.content };
+            next[next.length - 1] = { role: 'assistant', content: finalContent || last.content, actions };
             return next;
           }
           return prev;
@@ -139,21 +216,25 @@ export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile
     });
 
     if (!sent) {
-      // Fallback to REST
       try {
         const res = await fetch('/api/chat/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: apiMessages,
-            model: selectedModel,
-            context: SYSTEM_PROMPT,
-          }),
+          body: JSON.stringify({ messages: apiMessages, model: selectedModel, context: SYSTEM_PROMPT }),
         });
         const data = await res.json();
+        const content = data.content || 'No response';
+        const actions = parseActions(content);
+        if (actions.length > 0) {
+          setActionStatus(prev => {
+            const next = { ...prev };
+            actions.forEach(a => { next[a.id] = 'pending'; });
+            return next;
+          });
+        }
         setMessages(prev => [
           ...prev.filter(m => !m._streaming),
-          { role: 'assistant', content: data.content || 'No response' }
+          { role: 'assistant', content, actions }
         ]);
       } catch (err) {
         setMessages(prev => [
@@ -172,16 +253,43 @@ export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile
     }
   };
 
-  // Extract code blocks from a message for the "insert" button
-  const extractCodeBlocks = (content) => {
-    const regex = /```(\w+)?\n([\s\S]*?)```/g;
-    const blocks = [];
-    let match;
-    while ((match = regex.exec(content)) !== null) {
-      blocks.push({ lang: match[1] || '', code: match[2] });
+  // Execute an approved action
+  const handleApprove = useCallback(async (action) => {
+    setActionStatus(prev => ({ ...prev, [action.id]: 'running' }));
+    try {
+      const res = await fetch('/api/actions/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actions: [
+          action.type === 'create_file'
+            ? { type: 'create_file', payload: { path: action.path, content: action.content } }
+            : { type: 'run_command', payload: { command: action.command } }
+        ]}),
+      });
+      const data = await res.json();
+      const result = data.results?.[0];
+      if (result?.ok === false) throw new Error(result.error || 'Failed');
+      setActionStatus(prev => ({ ...prev, [action.id]: 'done' }));
+
+      if (action.type === 'create_file') {
+        onFileCreated?.(action.path, action.content);
+      }
+      if (action.type === 'run_command' && result?.stdout) {
+        // Append command result as a system message
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `**コマンド実行完了:** \`${action.command}\`\n\`\`\`\n${result.stdout}${result.stderr ? '\n' + result.stderr : ''}\`\`\``,
+        }]);
+      }
+    } catch (err) {
+      setActionStatus(prev => ({ ...prev, [action.id]: 'pending' })); // allow retry
+      alert(`実行エラー: ${err.message}`);
     }
-    return blocks;
-  };
+  }, [onFileCreated]);
+
+  const handleReject = useCallback((action) => {
+    setActionStatus(prev => ({ ...prev, [action.id]: 'rejected' }));
+  }, []);
 
   const clearChat = () => {
     setMessages([{ role: 'assistant', content: 'チャットをリセットしました。何でもお気軽に！' }]);
@@ -282,9 +390,19 @@ export default function ChatPanel({ ws, selectedModel, onModelChange, activeFile
                       },
                     }}
                   >
-                    {msg.content}
+                    {stripActions(msg.content)}
                   </ReactMarkdown>
                   {msg._streaming && <span className={styles.cursor}>▋</span>}
+                  {/* Action proposal cards */}
+                  {msg.actions?.map(action => (
+                    <ActionCard
+                      key={action.id}
+                      action={action}
+                      status={actionStatus[action.id] || 'pending'}
+                      onApprove={handleApprove}
+                      onReject={handleReject}
+                    />
+                  ))}
                 </>
               ) : (
                 <p className={styles.userText}>{msg.content}</p>
