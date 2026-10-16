@@ -8,6 +8,14 @@
   font-family: var(--font-mono);
 }
 
+:global([data-theme="light"]) .terminal {
+  background: #1e2030;
+}
+:global([data-theme="light"]) .header {
+  background: #252840;
+  border-bottom-color: #333652;
+}
+
 .dragHandle {
   height: 4px;
   cursor: ns-resize;

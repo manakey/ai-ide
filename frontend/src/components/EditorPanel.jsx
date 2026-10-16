@@ -61,7 +61,48 @@ export default function EditorPanel({ files, activeFile, onActiveFileChange, onF
         'minimap.background': '#0f1117',
       },
     });
-    monaco.editor.setTheme('ai-ide-dark');
+
+    // Light theme
+    monaco.editor.defineTheme('ai-ide-light', {
+      base: 'vs',
+      inherit: true,
+      rules: [
+        { token: 'comment', foreground: '7a8299', fontStyle: 'italic' },
+        { token: 'keyword', foreground: '2c5fb5' },
+        { token: 'string', foreground: '1a7a4e' },
+        { token: 'number', foreground: '9c5d00' },
+        { token: 'type', foreground: '7030a0' },
+        { token: 'function', foreground: '0070a8' },
+      ],
+      colors: {
+        'editor.background': '#ffffff',
+        'editor.foreground': '#1a1e2e',
+        'editorLineNumber.foreground': '#b0b8d0',
+        'editorLineNumber.activeForeground': '#4a5278',
+        'editor.selectionBackground': '#c5d4f0',
+        'editor.lineHighlightBackground': '#f0f2f9',
+        'editorCursor.foreground': '#2c6ef5',
+        'editorIndentGuide.background': '#e0e4f0',
+        'editorIndentGuide.activeBackground': '#c0c8e0',
+        'editor.findMatchBackground': '#bdd4ff',
+        'editor.findMatchHighlightBackground': '#d8e6ff',
+        'scrollbar.shadow': '#00000000',
+        'scrollbarSlider.background': '#c0c8e040',
+        'scrollbarSlider.hoverBackground': '#b0b8d0a0',
+        'minimap.background': '#f5f6fa',
+      },
+    });
+
+    // Apply correct theme based on current data-theme attribute
+    const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+    monaco.editor.setTheme(currentTheme === 'light' ? 'ai-ide-light' : 'ai-ide-dark');
+
+    // Watch for theme changes
+    const observer = new MutationObserver(() => {
+      const t = document.documentElement.getAttribute('data-theme') || 'dark';
+      monaco.editor.setTheme(t === 'light' ? 'ai-ide-light' : 'ai-ide-dark');
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     // Ctrl+Enter to run
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {

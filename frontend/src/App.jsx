@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import EditorPanel from './components/EditorPanel.jsx';
 import ChatPanel from './components/ChatPanel.jsx';
@@ -9,14 +9,33 @@ import { useFiles } from './hooks/useFiles.js';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import styles from './styles/App.module.css';
 
+// Persist theme across sessions
+function useTheme() {
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem('ide_theme') || 'dark'; } catch { return 'dark'; }
+  });
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem('ide_theme', theme); } catch {}
+  }, [theme]);
+  return [theme, setTheme];
+}
+
+// Browser-style tab bar
+const PANEL_TABS = [
+  { id: 'editor', label: '📝 Editor' },
+  { id: 'chat',   label: '◈ AI Chat' },
+  { id: 'terminal', label: '⌨ Terminal' },
+];
+
 export default function App() {
   const ws = useWebSocket();
   const fileStore = useFiles();
+  const [theme, setTheme] = useTheme();
 
   const [sidebarWidth, setSidebarWidth] = useState(200);
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [showGitHub, setShowGitHub] = useState(false);
-  const [showTerminal, setShowTerminal] = useState(true);
   const [terminalHeight, setTerminalHeight] = useState(200);
   const [output, setOutput] = useState(null);
   const [running, setRunning] = useState(false);
@@ -24,6 +43,17 @@ export default function App() {
   const [githubToken, setGithubToken] = useState(() => {
     try { return localStorage.getItem('gh_token') || ''; } catch { return ''; }
   });
+
+  // Active tab: on wide screens show side-by-side editor+chat; on narrow show tabs
+  const [activeTab, setActiveTab] = useState('editor');
+  const [narrowMode, setNarrowMode] = useState(false);
+
+  useEffect(() => {
+    const check = () => setNarrowMode(window.innerWidth < 900);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   const runCode = useCallback(async () => {
     const { activeFile, files } = fileStore;
@@ -41,7 +71,6 @@ export default function App() {
         body: JSON.stringify({ code: file.content, language: file.language }),
       });
       const data = await res.json();
-
       if (file.language === 'html') {
         setOutput({ status: 'html', html: data.html || file.content });
       } else {
@@ -60,7 +89,7 @@ export default function App() {
     }
   }, [fileStore]);
 
-  // Drag to resize editor/chat split
+  // Drag to resize editor/chat split (wide mode only)
   const handleSplitDrag = useCallback((e) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -68,8 +97,7 @@ export default function App() {
     const containerWidth = document.getElementById('main-area')?.offsetWidth || 1;
     const onMove = (ev) => {
       const dx = ev.clientX - startX;
-      const newRatio = Math.min(0.8, Math.max(0.2, startRatio + dx / containerWidth));
-      setSplitRatio(newRatio);
+      setSplitRatio(Math.min(0.8, Math.max(0.2, startRatio + dx / containerWidth)));
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
@@ -79,11 +107,50 @@ export default function App() {
     window.addEventListener('mouseup', onUp);
   }, [splitRatio]);
 
-  // Handle AI creating a file
   const handleFileCreated = useCallback((path, content) => {
     fileStore.createFile(path);
     setTimeout(() => fileStore.updateFile(path, content), 50);
   }, [fileStore]);
+
+  const editorPane = (
+    <EditorPanel
+      files={fileStore.files}
+      activeFile={fileStore.activeFile}
+      onActiveFileChange={fileStore.setActiveFile}
+      onFileUpdate={fileStore.updateFile}
+      output={output}
+      onClearOutput={() => setOutput(null)}
+      onRun={runCode}
+      running={running}
+    />
+  );
+
+  const chatPane = (
+    <ChatPanel
+      ws={ws}
+      selectedModel={selectedModel}
+      onModelChange={setSelectedModel}
+      activeFile={fileStore.activeFile}
+      activeFileContent={fileStore.files.get(fileStore.activeFile)?.content || ''}
+      onInsertCode={(code, filename) => {
+        if (filename) {
+          fileStore.createFile(filename);
+          setTimeout(() => fileStore.updateFile(filename, code), 50);
+        } else if (fileStore.activeFile) {
+          fileStore.updateFile(fileStore.activeFile, code);
+        }
+      }}
+      onFileCreated={handleFileCreated}
+    />
+  );
+
+  const terminalPane = (
+    <Terminal
+      sessionId="main"
+      height={terminalHeight}
+      onHeightChange={setTerminalHeight}
+    />
+  );
 
   return (
     <div className={styles.app}>
@@ -92,26 +159,38 @@ export default function App() {
         <div className={styles.titleLeft}>
           <span className={styles.logo}>◈ AI IDE</span>
         </div>
-        <div className={styles.titleCenter}>
+
+        {/* Browser-style panel tabs (always visible) */}
+        <div className={styles.panelTabs}>
+          {PANEL_TABS.map(tab => (
+            <button
+              key={tab.id}
+              className={`${styles.panelTab} ${activeTab === tab.id ? styles.panelTabActive : ''}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className={styles.titleRight}>
           {fileStore.activeFile && (
             <span className={styles.activeFilename}>{fileStore.activeFile}</span>
           )}
-        </div>
-        <div className={styles.titleRight}>
           <button
             className={styles.runBtn}
             onClick={runCode}
             disabled={running}
-            title="Run code"
+            title="Run code (Ctrl+Enter)"
           >
-            {running ? '⏳ Running...' : '▶ Run'}
+            {running ? '⏳' : '▶ Run'}
           </button>
           <button
-            className={`${styles.runBtn} ${showTerminal ? styles.runBtnActive : ''}`}
-            onClick={() => setShowTerminal(v => !v)}
-            title="Toggle terminal"
+            className={`${styles.iconBtn} ${theme === 'light' ? styles.iconBtnActive : ''}`}
+            onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
           >
-            ⌨ Terminal
+            {theme === 'dark' ? '☀️' : '🌙'}
           </button>
           <button
             className={styles.githubBtn}
@@ -137,50 +216,55 @@ export default function App() {
         />
 
         <div className={styles.rightColumn}>
-          {/* Top: editor + chat */}
-          <div className={styles.mainArea} id="main-area">
-            <div className={styles.editorArea} style={{ width: `${splitRatio * 100}%` }}>
-              <EditorPanel
-                files={fileStore.files}
-                activeFile={fileStore.activeFile}
-                onActiveFileChange={fileStore.setActiveFile}
-                onFileUpdate={fileStore.updateFile}
-                output={output}
-                onClearOutput={() => setOutput(null)}
-                onRun={runCode}
-                running={running}
-              />
+          {narrowMode ? (
+            /* ── NARROW: single pane shown at a time ── */
+            <div className={styles.singlePane}>
+              {activeTab === 'editor' && editorPane}
+              {activeTab === 'chat' && chatPane}
+              {activeTab === 'terminal' && (
+                <div className={styles.terminalFull}>
+                  <Terminal sessionId="main" height={9999} onHeightChange={() => {}} />
+                </div>
+              )}
             </div>
+          ) : (
+            /* ── WIDE: editor+chat side-by-side, terminal below ── */
+            <>
+              <div
+                className={styles.mainArea}
+                id="main-area"
+                style={{ display: activeTab === 'terminal' ? 'none' : undefined }}
+              >
+                <div
+                  className={styles.editorArea}
+                  style={{ width: `${splitRatio * 100}%`, display: activeTab === 'chat' ? 'none' : undefined }}
+                >
+                  {editorPane}
+                </div>
 
-            <div className={styles.splitHandle} onMouseDown={handleSplitDrag} />
+                {activeTab === 'editor' && (
+                  <div className={styles.splitHandle} onMouseDown={handleSplitDrag} />
+                )}
 
-            <div className={styles.chatArea} style={{ width: `${(1 - splitRatio) * 100}%` }}>
-              <ChatPanel
-                ws={ws}
-                selectedModel={selectedModel}
-                onModelChange={setSelectedModel}
-                activeFile={fileStore.activeFile}
-                activeFileContent={fileStore.files.get(fileStore.activeFile)?.content || ''}
-                onInsertCode={(code, filename) => {
-                  if (filename) {
-                    fileStore.createFile(filename);
-                    setTimeout(() => fileStore.updateFile(filename, code), 50);
-                  } else if (fileStore.activeFile) {
-                    fileStore.updateFile(fileStore.activeFile, code);
-                  }
-                }}
-                onFileCreated={handleFileCreated}
-              />
-            </div>
-          </div>
+                <div
+                  className={styles.chatArea}
+                  style={{
+                    width: activeTab === 'editor' ? `${(1 - splitRatio) * 100}%` : '100%',
+                    display: activeTab === 'editor' ? undefined : (activeTab === 'chat' ? undefined : 'none'),
+                  }}
+                >
+                  {chatPane}
+                </div>
+              </div>
 
-          {/* Bottom: terminal */}
-          {showTerminal && (
-            <Terminal
-              sessionId="main"
-              height={terminalHeight}
-              onHeightChange={setTerminalHeight}
-            />
+              {(activeTab === 'terminal' || activeTab === 'editor' || activeTab === 'chat') && (
+                <Terminal
+                  sessionId="main"
+                  height={activeTab === 'terminal' ? 9999 : terminalHeight}
+                  onHeightChange={setTerminalHeight}
+                />
+              )}
+            </>
           )}
         </div>
       </div>
