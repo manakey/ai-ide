@@ -116,6 +116,42 @@
 }
 .resizeHandle:hover { background: var(--accent-dim); }
 
+/* Folder */
+.folderItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+  min-width: 0;
+  border-left: 2px solid transparent;
+  user-select: none;
+}
+.folderItem:hover { background: var(--bg-hover); }
+.folderArrow {
+  font-size: 11px;
+  color: var(--text-muted);
+  width: 12px;
+  flex-shrink: 0;
+}
+.dragTarget { background: var(--accent-glow) !important; border-left-color: var(--accent) !important; }
+
+/* Header buttons */
+.headerBtns { display: flex; gap: 2px; }
+.iconBtn {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: color 0.15s, background 0.15s;
+}
+.iconBtn:hover { color: var(--text-primary); background: var(--bg-hover); }
+
 /* Context menu */
 .contextOverlay {
   position: fixed; inset: 0; z-index: 100;

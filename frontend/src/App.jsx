@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import EditorPanel from './components/EditorPanel.jsx';
 import ChatPanel from './components/ChatPanel.jsx';
@@ -9,7 +9,7 @@ import { useFiles } from './hooks/useFiles.js';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import styles from './styles/App.module.css';
 
-// Persist theme across sessions
+/* ── Theme ─────────────────────────────────────────────── */
 function useTheme() {
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem('ide_theme') || 'dark'; } catch { return 'dark'; }
@@ -21,33 +21,85 @@ function useTheme() {
   return [theme, setTheme];
 }
 
-// Browser-style tab bar
-const PANEL_TABS = [
-  { id: 'editor', label: '📝 Editor' },
-  { id: 'chat',   label: '◈ AI Chat' },
-  { id: 'terminal', label: '⌨ Terminal' },
+/* ── Run Output Panel ──────────────────────────────────── */
+function RunOutput({ output, onClear }) {
+  if (!output) {
+    return (
+      <div className={styles.runEmpty}>
+        <span>▶ Run を押すとここに出力が表示されます</span>
+      </div>
+    );
+  }
+
+  if (output.status === 'running') {
+    return <div className={styles.runEmpty}><span className={styles.runSpinner}>⏳ 実行中...</span></div>;
+  }
+
+  if (output.status === 'html') {
+    return (
+      <div className={styles.runHtml}>
+        <div className={styles.runHtmlBar}>
+          <span>🌐 HTML プレビュー</span>
+          <button className={styles.runClearBtn} onClick={onClear}>✕ 閉じる</button>
+        </div>
+        <iframe
+          className={styles.runIframe}
+          srcDoc={output.html}
+          sandbox="allow-scripts allow-same-origin"
+          title="HTML Preview"
+        />
+      </div>
+    );
+  }
+
+  const isOk = output.status === 'success';
+  return (
+    <div className={styles.runConsole}>
+      <div className={styles.runConsoleBar}>
+        <span className={isOk ? styles.runOk : styles.runErr}>
+          {isOk ? `✓ 成功 (${output.duration}ms)` : `✗ エラー (exit ${output.exitCode})`}
+        </span>
+        <button className={styles.runClearBtn} onClick={onClear}>✕ 閉じる</button>
+      </div>
+      <div className={styles.runConsoleBody}>
+        {output.text  && <pre className={styles.runStdout}>{output.text}</pre>}
+        {output.error && <pre className={styles.runStderr}>{output.error}</pre>}
+        {!output.text && !output.error && <pre className={styles.runMuted}>(出力なし)</pre>}
+      </div>
+    </div>
+  );
+}
+
+/* ── Tabs ──────────────────────────────────────────────── */
+const TABS = [
+  { id: 'editor',   label: '📝 エディタ' },
+  { id: 'chat',     label: '◈ AI チャット' },
+  { id: 'run',      label: '▶ 実行' },
+  { id: 'terminal', label: '⌨ ターミナル' },
 ];
 
+/* ── App ───────────────────────────────────────────────── */
 export default function App() {
   const ws = useWebSocket();
   const fileStore = useFiles();
   const [theme, setTheme] = useTheme();
 
-  const [sidebarWidth, setSidebarWidth] = useState(200);
-  const [splitRatio, setSplitRatio] = useState(0.5);
-  const [showGitHub, setShowGitHub] = useState(false);
-  const [terminalHeight, setTerminalHeight] = useState(200);
-  const [output, setOutput] = useState(null);
-  const [running, setRunning] = useState(false);
+  const [sidebarWidth, setSidebarWidth]   = useState(200);
+  const [splitRatio, setSplitRatio]       = useState(0.5);
+  const [showGitHub, setShowGitHub]       = useState(false);
+  const [terminalHeight, setTerminalHeight] = useState(220);
+  const [output, setOutput]               = useState(null);
+  const [running, setRunning]             = useState(false);
   const [selectedModel, setSelectedModel] = useState('');
-  const [githubToken, setGithubToken] = useState(() => {
+  const [activeTab, setActiveTab]         = useState('editor');
+  const [narrowMode, setNarrowMode]       = useState(false);
+  const runCmdRef = useRef(null); // Terminal の送信関数を保持
+
+  const [githubToken, setGithubToken]     = useState(() => {
     try { return localStorage.getItem('gh_token') || ''; } catch { return ''; }
   });
 
-  // Active tab: on wide screens show side-by-side editor+chat; on narrow show tabs
-  const [activeTab, setActiveTab] = useState('editor');
-  const [narrowMode, setNarrowMode] = useState(false);
-
+  /* narrow mode detection */
   useEffect(() => {
     const check = () => setNarrowMode(window.innerWidth < 900);
     check();
@@ -55,6 +107,7 @@ export default function App() {
     return () => window.removeEventListener('resize', check);
   }, []);
 
+  /* ── Run code ─────────────────────────────────────────── */
   const runCode = useCallback(async () => {
     const { activeFile, files } = fileStore;
     if (!activeFile) return;
@@ -63,6 +116,19 @@ export default function App() {
 
     setRunning(true);
     setOutput({ status: 'running', text: '' });
+    setActiveTab('run'); // 「実行」タブへ自動切り替え
+
+    // ターミナルにも同じコマンドを流す（並行実行）
+    const ext = activeFile.split('.').pop()?.toLowerCase();
+    const termCmd =
+      ext === 'py' ? `python3 "${activeFile}"` :
+      ext === 'js' || ext === 'mjs' ? `node "${activeFile}"` :
+      ext === 'ts' ? `npx ts-node "${activeFile}"` :
+      ext === 'sh' ? `bash "${activeFile}"` :
+      ext === 'go' ? `go run "${activeFile}"` : null;
+    if (termCmd && runCmdRef.current) {
+      runCmdRef.current(termCmd);
+    }
 
     try {
       const res = await fetch('/api/code/run', {
@@ -89,37 +155,46 @@ export default function App() {
     }
   }, [fileStore]);
 
-  // Drag to resize editor/chat split (wide mode only)
+  /* ── Split drag ───────────────────────────────────────── */
   const handleSplitDrag = useCallback((e) => {
     e.preventDefault();
     const startX = e.clientX;
     const startRatio = splitRatio;
     const containerWidth = document.getElementById('main-area')?.offsetWidth || 1;
-    const onMove = (ev) => {
-      const dx = ev.clientX - startX;
-      setSplitRatio(Math.min(0.8, Math.max(0.2, startRatio + dx / containerWidth)));
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
+    const onMove = (ev) => setSplitRatio(Math.min(0.8, Math.max(0.2, startRatio + (ev.clientX - startX) / containerWidth)));
+    const onUp   = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   }, [splitRatio]);
 
+  /* ── File created by AI ───────────────────────────────── */
   const handleFileCreated = useCallback((path, content) => {
     fileStore.createFile(path);
     setTimeout(() => fileStore.updateFile(path, content), 50);
   }, [fileStore]);
 
+  /* ── Command result from ChatPanel ───────────────────── */
+  const handleCommandResult = useCallback((command, result) => {
+    setOutput({
+      status: result.exitCode === 0 ? 'success' : 'error',
+      text: result.stdout || '',
+      error: result.stderr || '',
+      duration: null,
+      exitCode: result.exitCode,
+      label: command,
+    });
+    setActiveTab('run'); // コマンド実行も「実行」タブへ
+  }, []);
+
+  /* ── Panes ────────────────────────────────────────────── */
   const editorPane = (
     <EditorPanel
       files={fileStore.files}
       activeFile={fileStore.activeFile}
       onActiveFileChange={fileStore.setActiveFile}
       onFileUpdate={fileStore.updateFile}
-      output={output}
-      onClearOutput={() => setOutput(null)}
+      output={null}           // output panel は「実行」タブへ移動
+      onClearOutput={() => {}}
       onRun={runCode}
       running={running}
     />
@@ -133,42 +208,107 @@ export default function App() {
       activeFile={fileStore.activeFile}
       activeFileContent={fileStore.files.get(fileStore.activeFile)?.content || ''}
       onInsertCode={(code, filename) => {
-        if (filename) {
-          fileStore.createFile(filename);
-          setTimeout(() => fileStore.updateFile(filename, code), 50);
-        } else if (fileStore.activeFile) {
-          fileStore.updateFile(fileStore.activeFile, code);
-        }
+        if (filename) { fileStore.createFile(filename); setTimeout(() => fileStore.updateFile(filename, code), 50); }
+        else if (fileStore.activeFile) fileStore.updateFile(fileStore.activeFile, code);
       }}
       onFileCreated={handleFileCreated}
+      onCommandResult={handleCommandResult}
     />
   );
 
-  const terminalPane = (
+  const runPane = <RunOutput output={output} onClear={() => setOutput(null)} />;
+
+  const termPane = (
     <Terminal
       sessionId="main"
-      height={terminalHeight}
+      height={narrowMode || activeTab === 'terminal' ? 9999 : terminalHeight}
       onHeightChange={setTerminalHeight}
+      runCmdRef={runCmdRef}
     />
   );
+
+  /* ── render tab content ───────────────────────────────── */
+  const renderContent = () => {
+    if (narrowMode) {
+      // スマホ: 1ペイン
+      return (
+        <div className={styles.singlePane}>
+          {activeTab === 'editor'   && editorPane}
+          {activeTab === 'chat'     && chatPane}
+          {activeTab === 'run'      && runPane}
+          {activeTab === 'terminal' && <div className={styles.terminalFull}>{termPane}</div>}
+        </div>
+      );
+    }
+
+    // PC: エディタ+チャット横並び、ターミナル下部
+    const showEditor   = activeTab !== 'terminal' && activeTab !== 'run';
+    const showChat     = activeTab === 'chat' || activeTab === 'editor';
+    const showRun      = activeTab === 'run';
+    const showTerminal = activeTab === 'terminal';
+
+    return (
+      <>
+        {/* メインエリア (エディタ ＋ チャット / 実行) */}
+        <div
+          className={styles.mainArea}
+          id="main-area"
+          style={{ display: showTerminal ? 'none' : undefined }}
+        >
+          {/* エディタ */}
+          <div
+            className={styles.editorArea}
+            style={{
+              width: showRun ? '50%' : showEditor ? `${splitRatio * 100}%` : '100%',
+              display: showRun && !showEditor ? 'none' : undefined,
+            }}
+          >
+            {editorPane}
+          </div>
+
+          {/* ドラッグハンドル */}
+          {showEditor && <div className={styles.splitHandle} onMouseDown={handleSplitDrag} />}
+          {showRun    && <div className={styles.splitHandle} />}
+
+          {/* チャット or 実行パネル */}
+          <div
+            className={styles.chatArea}
+            style={{
+              width: showEditor ? `${(1 - splitRatio) * 100}%` : showRun ? '50%' : '100%',
+              display: (!showChat && !showRun) ? 'none' : undefined,
+            }}
+          >
+            {showRun  ? runPane  : chatPane}
+          </div>
+        </div>
+
+        {/* ターミナル */}
+        {showTerminal
+          ? <div className={styles.terminalFull}>{termPane}</div>
+          : <Terminal sessionId="main" height={terminalHeight} onHeightChange={setTerminalHeight} />
+        }
+      </>
+    );
+  };
 
   return (
     <div className={styles.app}>
-      {/* Title bar */}
+      {/* ── Title bar ───────────────────────────────────── */}
       <div className={styles.titlebar}>
-        <div className={styles.titleLeft}>
-          <span className={styles.logo}>◈ AI IDE</span>
-        </div>
+        <span className={styles.logo}>◈ AI IDE</span>
 
-        {/* Browser-style panel tabs (always visible) */}
+        {/* Browser-style tabs */}
         <div className={styles.panelTabs}>
-          {PANEL_TABS.map(tab => (
+          {TABS.map(tab => (
             <button
               key={tab.id}
-              className={`${styles.panelTab} ${activeTab === tab.id ? styles.panelTabActive : ''}`}
+              className={`${styles.panelTab} ${activeTab === tab.id ? styles.panelTabActive : ''} ${tab.id === 'run' && running ? styles.panelTabRunning : ''}`}
               onClick={() => setActiveTab(tab.id)}
             >
               {tab.label}
+              {tab.id === 'run' && output && output.status !== 'running' && (
+                <span className={output.status === 'success' ? styles.tabDotOk : styles.tabDotErr} />
+              )}
             </button>
           ))}
         </div>
@@ -177,95 +317,38 @@ export default function App() {
           {fileStore.activeFile && (
             <span className={styles.activeFilename}>{fileStore.activeFile}</span>
           )}
-          <button
-            className={styles.runBtn}
-            onClick={runCode}
-            disabled={running}
-            title="Run code (Ctrl+Enter)"
-          >
+          <button className={styles.runBtn} onClick={runCode} disabled={running} title="実行 (Ctrl+Enter)">
             {running ? '⏳' : '▶ Run'}
           </button>
           <button
-            className={`${styles.iconBtn} ${theme === 'light' ? styles.iconBtnActive : ''}`}
+            className={styles.iconBtn}
             onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
-            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            title={theme === 'dark' ? 'ライトモード' : 'ダークモード'}
           >
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>
-          <button
-            className={styles.githubBtn}
-            onClick={() => setShowGitHub(true)}
-            title="Push to GitHub"
-          >
+          <button className={styles.githubBtn} onClick={() => setShowGitHub(true)} title="Push to GitHub">
             ⬆ GitHub
           </button>
         </div>
       </div>
 
-      {/* Main layout */}
+      {/* ── Body ────────────────────────────────────────── */}
       <div className={styles.body}>
         <Sidebar
           files={fileStore.files}
           activeFile={fileStore.activeFile}
           onSelectFile={fileStore.setActiveFile}
           onCreateFile={fileStore.createFile}
+          onCreateFolder={fileStore.createFolder}
           onDeleteFile={fileStore.deleteFile}
           onRenameFile={fileStore.renameFile}
+          onMoveFile={fileStore.moveFile}
           width={sidebarWidth}
           onWidthChange={setSidebarWidth}
         />
-
         <div className={styles.rightColumn}>
-          {narrowMode ? (
-            /* ── NARROW: single pane shown at a time ── */
-            <div className={styles.singlePane}>
-              {activeTab === 'editor' && editorPane}
-              {activeTab === 'chat' && chatPane}
-              {activeTab === 'terminal' && (
-                <div className={styles.terminalFull}>
-                  <Terminal sessionId="main" height={9999} onHeightChange={() => {}} />
-                </div>
-              )}
-            </div>
-          ) : (
-            /* ── WIDE: editor+chat side-by-side, terminal below ── */
-            <>
-              <div
-                className={styles.mainArea}
-                id="main-area"
-                style={{ display: activeTab === 'terminal' ? 'none' : undefined }}
-              >
-                <div
-                  className={styles.editorArea}
-                  style={{ width: `${splitRatio * 100}%`, display: activeTab === 'chat' ? 'none' : undefined }}
-                >
-                  {editorPane}
-                </div>
-
-                {activeTab === 'editor' && (
-                  <div className={styles.splitHandle} onMouseDown={handleSplitDrag} />
-                )}
-
-                <div
-                  className={styles.chatArea}
-                  style={{
-                    width: activeTab === 'editor' ? `${(1 - splitRatio) * 100}%` : '100%',
-                    display: activeTab === 'editor' ? undefined : (activeTab === 'chat' ? undefined : 'none'),
-                  }}
-                >
-                  {chatPane}
-                </div>
-              </div>
-
-              {(activeTab === 'terminal' || activeTab === 'editor' || activeTab === 'chat') && (
-                <Terminal
-                  sessionId="main"
-                  height={activeTab === 'terminal' ? 9999 : terminalHeight}
-                  onHeightChange={setTerminalHeight}
-                />
-              )}
-            </>
-          )}
+          {renderContent()}
         </div>
       </div>
 
@@ -274,10 +357,7 @@ export default function App() {
       {showGitHub && (
         <GitHubModal
           token={githubToken}
-          onTokenChange={(t) => {
-            setGithubToken(t);
-            try { localStorage.setItem('gh_token', t); } catch {}
-          }}
+          onTokenChange={t => { setGithubToken(t); try { localStorage.setItem('gh_token', t); } catch {} }}
           getAllFiles={fileStore.getAllFilesForExport}
           onClose={() => setShowGitHub(false)}
         />

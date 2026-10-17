@@ -11,6 +11,7 @@ import { codeRouter } from './routes/code.js';
 import { githubRouter } from './routes/github.js';
 import { filesRouter } from './routes/files.js';
 import { handleTerminalWS, runCommand, WORK_DIR } from './routes/terminal.js';
+import { workspaceRouter, tryStartAutoServer } from './routes/workspace.js';
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use('/api/chat', chatRouter);
 app.use('/api/code', codeRouter);
 app.use('/api/github', githubRouter);
 app.use('/api/files', filesRouter);
+app.use('/api/workspace', workspaceRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', aiProvider: process.env.AI_PROVIDER || 'ollama', workDir: WORK_DIR });
@@ -190,4 +192,6 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`AI IDE Backend running on port ${PORT}`);
   console.log(`AI Provider: ${process.env.AI_PROVIDER || 'ollama'}`);
+  // Auto-start server.js in workspace if it exists
+  tryStartAutoServer();
 });

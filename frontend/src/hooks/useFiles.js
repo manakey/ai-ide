@@ -78,6 +78,30 @@ export function useFiles() {
     if (activeFile === oldName) setActiveFile(newName);
   }, [activeFile]);
 
+  // フォルダー作成（ .gitkeep ファイルを仮に追加）
+  const createFolder = useCallback((folderPath) => {
+    const placeholder = `${folderPath}/.gitkeep`;
+    setFiles(prev => {
+      const next = new Map(prev);
+      next.set(placeholder, { content: '', language: 'plaintext' });
+      return next;
+    });
+  }, []);
+
+  // ファイル移動（リネームと同じ）
+  const moveFile = useCallback((oldPath, newPath) => {
+    setFiles(prev => {
+      const next = new Map(prev);
+      const file = next.get(oldPath);
+      if (file) {
+        next.delete(oldPath);
+        next.set(newPath, { ...file, language: detectLanguage(newPath) });
+      }
+      return next;
+    });
+    if (activeFile === oldPath) setActiveFile(newPath);
+  }, [activeFile]);
+
   const getAllFilesForExport = useCallback(() => {
     return Array.from(files.entries()).map(([path, data]) => ({
       path,
@@ -91,8 +115,10 @@ export function useFiles() {
     setActiveFile,
     updateFile,
     createFile,
+    createFolder,
     deleteFile,
     renameFile,
+    moveFile,
     getAllFilesForExport,
   };
 }
