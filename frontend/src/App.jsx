@@ -118,8 +118,16 @@ export default function App() {
     setOutput({ status: 'running', text: '' });
     setActiveTab('run'); // 「実行」タブへ自動切り替え
 
-    // ターミナルにも同じコマンドを流す（並行実行）
     const ext = activeFile.split('.').pop()?.toLowerCase();
+
+    // HTML ファイルは API不要、直接プレビュー
+    if (ext === 'html') {
+      setOutput({ status: 'html', html: file.content });
+      setRunning(false);
+      return;
+    }
+
+    // ターミナルにも同じコマンドを流す（並行実行）
     const termCmd =
       ext === 'py' ? `python3 "${activeFile}"` :
       ext === 'js' || ext === 'mjs' ? `node "${activeFile}"` :
@@ -137,8 +145,9 @@ export default function App() {
         body: JSON.stringify({ code: file.content, language: file.language }),
       });
       const data = await res.json();
-      if (file.language === 'html') {
-        setOutput({ status: 'html', html: data.html || file.content });
+      if (data.html) {
+        // バックエンドがHTMLプレビューを返した（ブラウザJSを含むコードなど）
+        setOutput({ status: 'html', html: data.html });
       } else {
         setOutput({
           status: data.exitCode === 0 ? 'success' : 'error',
@@ -186,106 +195,123 @@ export default function App() {
     setActiveTab('run'); // コマンド実行も「実行」タブへ
   }, []);
 
-  /* ── Panes ────────────────────────────────────────────── */
-  const editorPane = (
-    <EditorPanel
-      files={fileStore.files}
-      activeFile={fileStore.activeFile}
-      onActiveFileChange={fileStore.setActiveFile}
-      onFileUpdate={fileStore.updateFile}
-      output={null}           // output panel は「実行」タブへ移動
-      onClearOutput={() => {}}
-      onRun={runCode}
-      running={running}
-    />
-  );
+  /* ── Panes (常にマウント、display:none で隠す → 状態保持) ─ */
+  const isTerminal = activeTab === 'terminal';
+  const isRun      = activeTab === 'run';
+  const isChat     = activeTab === 'chat';
+  const isEditor   = activeTab === 'editor';
 
-  const chatPane = (
-    <ChatPanel
-      ws={ws}
-      selectedModel={selectedModel}
-      onModelChange={setSelectedModel}
-      activeFile={fileStore.activeFile}
-      activeFileContent={fileStore.files.get(fileStore.activeFile)?.content || ''}
-      onInsertCode={(code, filename) => {
-        if (filename) { fileStore.createFile(filename); setTimeout(() => fileStore.updateFile(filename, code), 50); }
-        else if (fileStore.activeFile) fileStore.updateFile(fileStore.activeFile, code);
-      }}
-      onFileCreated={handleFileCreated}
-      onCommandResult={handleCommandResult}
-    />
-  );
+  // PC幅: エディタとチャットは並列表示
+  // narrow: タブで1枚ずつ
+  const editorVisible  = narrowMode ? isEditor  : !isTerminal;
+  const chatVisible    = narrowMode ? isChat    : !isTerminal && !isRun;
+  const runVisible     = narrowMode ? isRun     : isRun;
+  const termVisible    = isTerminal;
 
-  const runPane = <RunOutput output={output} onClear={() => setOutput(null)} />;
-
-  const termPane = (
-    <Terminal
-      sessionId="main"
-      height={narrowMode || activeTab === 'terminal' ? 9999 : terminalHeight}
-      onHeightChange={setTerminalHeight}
-      runCmdRef={runCmdRef}
-    />
-  );
-
-  /* ── render tab content ───────────────────────────────── */
+  /* ── render ───────────────────────────────────────────── */
   const renderContent = () => {
     if (narrowMode) {
-      // スマホ: 1ペイン
       return (
         <div className={styles.singlePane}>
-          {activeTab === 'editor'   && editorPane}
-          {activeTab === 'chat'     && chatPane}
-          {activeTab === 'run'      && runPane}
-          {activeTab === 'terminal' && <div className={styles.terminalFull}>{termPane}</div>}
+          {/* 全パネルを常にマウント、display:none で切り替え */}
+          <div style={{ display: isEditor ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+            <EditorPanel
+              files={fileStore.files}
+              activeFile={fileStore.activeFile}
+              onActiveFileChange={fileStore.setActiveFile}
+              onFileUpdate={fileStore.updateFile}
+              output={null}
+              onClearOutput={() => {}}
+              onRun={runCode}
+              running={running}
+            />
+          </div>
+          <div style={{ display: isChat ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+            <ChatPanel
+              ws={ws}
+              selectedModel={selectedModel}
+              onModelChange={setSelectedModel}
+              activeFile={fileStore.activeFile}
+              activeFileContent={fileStore.files.get(fileStore.activeFile)?.content || ''}
+              onInsertCode={(code, filename) => {
+                if (filename) { fileStore.createFile(filename); setTimeout(() => fileStore.updateFile(filename, code), 50); }
+                else if (fileStore.activeFile) fileStore.updateFile(fileStore.activeFile, code);
+              }}
+              onFileCreated={handleFileCreated}
+              onCommandResult={handleCommandResult}
+            />
+          </div>
+          <div style={{ display: isRun ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+            <RunOutput output={output} onClear={() => setOutput(null)} />
+          </div>
+          <div style={{ display: isTerminal ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+            <Terminal sessionId="main" height={9999} onHeightChange={setTerminalHeight} runCmdRef={runCmdRef} />
+          </div>
         </div>
       );
     }
 
-    // PC: エディタ+チャット横並び、ターミナル下部
-    const showEditor   = activeTab !== 'terminal' && activeTab !== 'run';
-    const showChat     = activeTab === 'chat' || activeTab === 'editor';
-    const showRun      = activeTab === 'run';
-    const showTerminal = activeTab === 'terminal';
-
+    // PC: 常にすべてマウント
     return (
       <>
-        {/* メインエリア (エディタ ＋ チャット / 実行) */}
         <div
           className={styles.mainArea}
           id="main-area"
-          style={{ display: showTerminal ? 'none' : undefined }}
+          style={{ display: isTerminal ? 'none' : undefined }}
         >
           {/* エディタ */}
           <div
             className={styles.editorArea}
-            style={{
-              width: showRun ? '50%' : showEditor ? `${splitRatio * 100}%` : '100%',
-              display: showRun && !showEditor ? 'none' : undefined,
-            }}
+            style={{ width: `${splitRatio * 100}%` }}
           >
-            {editorPane}
+            <EditorPanel
+              files={fileStore.files}
+              activeFile={fileStore.activeFile}
+              onActiveFileChange={fileStore.setActiveFile}
+              onFileUpdate={fileStore.updateFile}
+              output={null}
+              onClearOutput={() => {}}
+              onRun={runCode}
+              running={running}
+            />
           </div>
 
-          {/* ドラッグハンドル */}
-          {showEditor && <div className={styles.splitHandle} onMouseDown={handleSplitDrag} />}
-          {showRun    && <div className={styles.splitHandle} />}
+          <div className={styles.splitHandle} onMouseDown={handleSplitDrag} />
 
-          {/* チャット or 実行パネル */}
+          {/* チャット (常にマウント、RunタブはRunOutputを重ねる) */}
           <div
             className={styles.chatArea}
-            style={{
-              width: showEditor ? `${(1 - splitRatio) * 100}%` : showRun ? '50%' : '100%',
-              display: (!showChat && !showRun) ? 'none' : undefined,
-            }}
+            style={{ width: `${(1 - splitRatio) * 100}%`, position: 'relative' }}
           >
-            {showRun  ? runPane  : chatPane}
+            {/* ChatPanel は常に存在 */}
+            <div style={{ display: isRun ? 'none' : 'flex', flex: 1, flexDirection: 'column', overflow: 'hidden', minHeight: 0, height: '100%' }}>
+              <ChatPanel
+                ws={ws}
+                selectedModel={selectedModel}
+                onModelChange={setSelectedModel}
+                activeFile={fileStore.activeFile}
+                activeFileContent={fileStore.files.get(fileStore.activeFile)?.content || ''}
+                onInsertCode={(code, filename) => {
+                  if (filename) { fileStore.createFile(filename); setTimeout(() => fileStore.updateFile(filename, code), 50); }
+                  else if (fileStore.activeFile) fileStore.updateFile(fileStore.activeFile, code);
+                }}
+                onFileCreated={handleFileCreated}
+                onCommandResult={handleCommandResult}
+              />
+            </div>
+            {/* RunOutput は実行タブのときだけ表示 */}
+            <div style={{ display: isRun ? 'flex' : 'none', flex: 1, flexDirection: 'column', overflow: 'hidden', minHeight: 0, height: '100%' }}>
+              <RunOutput output={output} onClear={() => setOutput(null)} />
+            </div>
           </div>
         </div>
 
-        {/* ターミナル */}
-        {showTerminal
-          ? <div className={styles.terminalFull}>{termPane}</div>
-          : <Terminal sessionId="main" height={terminalHeight} onHeightChange={setTerminalHeight} />
+        {/* ターミナル: 常にマウント */}
+        {isTerminal
+          ? <div className={styles.terminalFull}>
+              <Terminal sessionId="main" height={9999} onHeightChange={setTerminalHeight} runCmdRef={runCmdRef} />
+            </div>
+          : <Terminal sessionId="main" height={terminalHeight} onHeightChange={setTerminalHeight} runCmdRef={runCmdRef} />
         }
       </>
     );

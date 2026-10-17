@@ -67,10 +67,34 @@ async function runCode({ code, language, stdin, workDir }) {
     switch (language) {
       case 'javascript':
       case 'js':
+      case 'jsx': {
+        // ブラウザ用コード（DOM API使用）かどうか判定
+        const browserAPIs = /\b(document|window|navigator|localStorage|sessionStorage|fetch|XMLHttpRequest|alert|confirm|prompt|requestAnimationFrame|canvas|WebGL|AudioContext)\b/;
+        if (browserAPIs.test(code)) {
+          // HTML ラッパーでプレビュー
+          const htmlWrapper = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #fff; color: #111; }
+  </style>
+</head>
+<body>
+<script>
+${code}
+</script>
+</body>
+</html>`;
+          return resolve({ output: '', html: htmlWrapper, language: 'html' });
+        }
         filename = join(workDir, 'main.js');
         writeFileSync(filename, code);
         command = `node "${filename}"`;
         break;
+      }
 
       case 'typescript':
       case 'ts':
